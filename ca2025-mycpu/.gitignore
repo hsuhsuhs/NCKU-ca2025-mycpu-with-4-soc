@@ -1,0 +1,62 @@
+### Build outputs (SBT 1.x)
+target/
+*/target/
+.history
+project/plugins/project/
+
+### Generated binaries
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+*.elf
+*.hex
+
+### Logs and crash dumps
+*.log
+hs_err_pid*
+
+### IDE and tool metadata
+.project
+.cproject
+.classpath
+.externalToolBuilders/
+*.launch
+.vscode/
+.metals/
+
+### OS cruft
+.DS_Store
+
+### Simulation artifacts
+*/csrc/*.asmbin
+test_run_dir/
+*/test_run_dir/
+*.vcd
+*.fst
+
+# Verilator generated files and build directories
+**/verilog/**/obj_dir/
+**/verilog/**/*.v
+**/verilog/**/*.fir
+**/verilog/**/*.f
+**/verilog/**/*.anno.json
+**/verilog/**/*.vcd
+**/verilog/**/*.txt
+**/verilog/**/*.asmbin
+**/verilog/**/*.asmbin.txt
+
+# Exception: Keep Verilator source files (not generated)
+!**/verilog/verilator/sim.cpp
+!**/verilog/verilator/*.h
+
+### RISCOF compliance test results
+*/results/
+
+### Auto-generated compliance test files (created by RISCOF during test runs)
+**/src/test/scala/riscv/compliance/ComplianceTest.scala
+**/src/main/resources/test.asmbin
+**/src/main/resources/test_*.asmbin

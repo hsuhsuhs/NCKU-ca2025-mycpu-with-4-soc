@@ -1,0 +1,19 @@
+# RISCOF test results and generated files
+riscof_work/
+riscof_work_*/
+
+# Cloned repositories (users should clone these themselves)
+rv32emu/
+riscv-arch-test/
+
+# Generated ISA/platform YAML files (RISCOF output)
+*_checked.yaml
+database.yaml
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# sbt output logs from test runs
+sbt_output.log
