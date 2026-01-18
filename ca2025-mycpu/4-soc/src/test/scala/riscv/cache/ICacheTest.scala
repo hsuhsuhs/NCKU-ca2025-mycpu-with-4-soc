@@ -7,45 +7,57 @@ import org.scalatest.flatspec.AnyFlatSpec
 class ICacheSpec extends AnyFlatSpec with ChiselScalatestTester {
   "ICache" should "handle miss, refill 4 words, and then hit" in {
     test(new ICache) { dut =>
-      // 初始化 AXI 訊號
-      dut.io.M_AXI_ARREADY.poke(false.B)
-      dut.io.M_AXI_RVALID.poke(false.B)
+      // --- Helper Variables for AXI Channels (Read Only for ICache) ---
+      val axi_ar = dut.io.axi.read_address_channel
+      val axi_r  = dut.io.axi.read_data_channel
+
+      // Initialize AXI signals
+      axi_ar.ARREADY.poke(false.B)
+      axi_r.RVALID.poke(false.B)
       dut.io.cpu_req.poke(false.B)
 
-      // --- Step 1: 請求一個地址 (Miss) ---
+      // Request an address (Miss) ---
       dut.io.cpu_addr.poke("h0000_1000".U)
       dut.io.cpu_req.poke(true.B)
-      dut.clock.step() // 讓 SyncReadMem 讀取
+      dut.clock.step() // Let SyncReadMem read
 
-      // 此時應該發生 Miss，stall 拉高，ARVALID 拉高
+      // At this point, a Miss should occur: stall goes high, ARVALID goes high
       dut.io.cpu_stall.expect(true.B)
-      dut.io.M_AXI_ARVALID.expect(true.B)
-      dut.io.M_AXI_ARADDR.expect("h0000_1000".U)
+      axi_ar.ARVALID.expect(true.B)
+      axi_ar.ARADDR.expect("h0000_1000".U)
 
-      // --- Step 2: 模擬 AXI 4-word Refill ---
+      // Simulate AXI 4-word Refill ---
       for (i <- 0 until 4) {
-        // AR 握手
-        dut.io.M_AXI_ARREADY.poke(true.B)
-        while (dut.io.M_AXI_ARVALID.peekBoolean() == false) dut.clock.step()
+        // AR Handshake
+        axi_ar.ARREADY.poke(true.B)
+        
+        // Wait for master to assert ARVALID (if not already asserted)
+        while (axi_ar.ARVALID.peekBoolean() == false) dut.clock.step()
+        
         dut.clock.step()
-        dut.io.M_AXI_ARREADY.poke(false.B)
+        axi_ar.ARREADY.poke(false.B)
 
-        // 回傳資料
-        dut.io.M_AXI_RDATA.poke((0x100 + i).U) // 模擬指令資料 0x100, 0x101...
-        dut.io.M_AXI_RVALID.poke(true.B)
+        // Return Data (R Channel)
+        axi_r.RDATA.poke((0x100 + i).U) // Simulate instruction data 0x100, 0x101...
+        axi_r.RVALID.poke(true.B)
+        
+        // Wait for master to be ready to accept data
+        while (axi_r.RREADY.peekBoolean() == false) dut.clock.step()
+        
         dut.clock.step()
-        dut.io.M_AXI_RVALID.poke(false.B)
+        axi_r.RVALID.poke(false.B)
       }
 
-      // --- Step 3: 更新 Tag 後回到 Idle ---
+      // Update Tag and return to Idle ---
       dut.clock.step(2) 
-      dut.io.cpu_stall.expect(false.B) // Refill 完成，Stall 應該解除
+      dut.io.cpu_stall.expect(false.B) // Refill complete, Stall should be de-asserted
 
-      // --- Step 4: 再次請求同一個地址 (Hit) ---
+      // Request the same address again (Hit) ---
       dut.io.cpu_addr.poke("h0000_1000".U)
       dut.clock.step()
+      
       dut.io.cpu_stall.expect(false.B)
-      dut.io.cpu_data.expect(0x100.U) // 應該讀到剛才 Refill 的第一筆資料
+      dut.io.cpu_data.expect(0x100.U) // Should read the first word refilled earlier
     }
   }
 }

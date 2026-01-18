@@ -41,16 +41,12 @@ class ICacheWVcdTest extends AnyFlatSpec with ChiselScalatestTester {
       io.cpu_stall       := icache.io.cpu_stall
 
       // ---------------- AXI Read Channel ----------------
-      slave.io.channels.read_address_channel.ARADDR  := icache.io.M_AXI_ARADDR
-      slave.io.channels.read_address_channel.ARVALID := icache.io.M_AXI_ARVALID
-      slave.io.channels.read_address_channel.ARPROT  := 0.U
-      icache.io.M_AXI_ARREADY                        := slave.io.channels.read_address_channel.ARREADY
-
-      icache.io.M_AXI_RDATA                      := slave.io.channels.read_data_channel.RDATA
-      icache.io.M_AXI_RVALID                     := slave.io.channels.read_data_channel.RVALID
-      slave.io.channels.read_data_channel.RREADY := icache.io.M_AXI_RREADY
+      // Use bulk connection for cleaner code
+      slave.io.channels.read_address_channel <> icache.io.axi.read_address_channel
+      slave.io.channels.read_data_channel    <> icache.io.axi.read_data_channel
 
       // ---------------- Disable AXI write ----------------
+      // I-Cache is read-only, so we disable write channels on the slave
       slave.io.channels.write_address_channel.AWADDR  := 0.U
       slave.io.channels.write_address_channel.AWVALID := false.B
       slave.io.channels.write_address_channel.AWPROT  := 0.U
@@ -58,33 +54,42 @@ class ICacheWVcdTest extends AnyFlatSpec with ChiselScalatestTester {
       slave.io.channels.write_data_channel.WVALID     := false.B
       slave.io.channels.write_data_channel.WSTRB      := 0.U
       slave.io.channels.write_response_channel.BREADY := false.B
+      
+      // Tie off unused I-Cache write outputs (already tied in ICache.scala, but good for safety)
+      icache.io.axi.write_address_channel.AWREADY := false.B
+      icache.io.axi.write_data_channel.WREADY     := false.B
+      icache.io.axi.write_response_channel.BVALID := false.B
+      icache.io.axi.write_response_channel.BRESP  := 0.U
 
       // ---------------- Memory ----------------
       val isTest = io.test_write_en
 
+      // Access I-Cache Read Address via nested structure
+      val axi_ar = icache.io.axi.read_address_channel
+
       mem.io.bundle.address :=
-        Mux(isTest, io.test_write_addr >> 2, icache.io.M_AXI_ARADDR >> 2)
+        Mux(isTest, io.test_write_addr >> 2, axi_ar.ARADDR >> 2)
 
       mem.io.bundle.write_enable := isTest
       mem.io.bundle.write_data   := io.test_write_data
       mem.io.bundle.write_strobe.foreach(_ := true.B)
 
       slave.io.bundle.read_data  := mem.io.bundle.read_data 
-      slave.io.bundle.read_valid := RegNext(icache.io.M_AXI_ARVALID)
+      slave.io.bundle.read_valid := RegNext(axi_ar.ARVALID)
 
       mem.io.instruction_address := 0.U
       mem.io.debug_read_address  := io.cpu_addr
 
       // ---------------- Debug (VCD) ----------------
-      io.dbg_arvalid := icache.io.M_AXI_ARVALID
-      io.dbg_rvalid  := icache.io.M_AXI_RVALID
+      io.dbg_arvalid := axi_ar.ARVALID
+      io.dbg_rvalid  := icache.io.axi.read_data_channel.RVALID
       io.dbg_hit     := !io.cpu_stall && io.cpu_req
-      io.dbg_state   := icache.io.dbg_state   // <== 需要 state 是 public val
+      io.dbg_state   := icache.io.dbg_state   // <== Needs state to be a public val in ICache
     }).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
 
       dut.clock.setTimeout(500)
 
-      // ---------------- Step 1: preload memory ----------------
+      // ---------------- preload memory ----------------
       val targetAddr = 0x100
       dut.io.test_write_en.poke(true.B)
       dut.io.test_write_data.poke("hDEADBEEF".U)
@@ -96,10 +101,10 @@ class ICacheWVcdTest extends AnyFlatSpec with ChiselScalatestTester {
       dut.io.test_write_en.poke(false.B)
       dut.clock.step(5)
 
-      // ---------------- Step 2: first fetch (MISS) ----------------
+      // ---------------- first fetch (MISS) ----------------
       dut.io.cpu_addr.poke(targetAddr.U)
       dut.io.cpu_req.poke(true.B)
-      dut.clock.step() //給 FSM 一個週期進入 Refill 狀態
+      dut.clock.step() // Give FSM one cycle to enter Refill state
       var cycles = 0
       while (dut.io.cpu_stall.peekBoolean() && cycles < 50) {
         dut.clock.step()
@@ -109,16 +114,16 @@ class ICacheWVcdTest extends AnyFlatSpec with ChiselScalatestTester {
       println(s"Refill cycles = $cycles")
       assert(cycles > 0, "Cache did not enter refill")
 
-      // ---------------- Step 3: read data ----------------
+      // ---------------- read data ----------------
       dut.clock.step()
       val data = dut.io.cpu_data.peekInt()
       println(f"Read data = 0x$data%08X")
 
-      // 使用 BigInt 確保比較時不會因為正負號出錯
+      // Use BigInt to ensure comparison is safe from sign extension issues
       val expected = BigInt("DEADBEEF", 16)
       assert(data == expected, f"Refill data incorrect: expected 0x$expected%08X, got 0x$data%08X")
 
-      // ---------------- Step 4: second fetch (HIT) ----------------
+      // ---------------- second fetch (HIT) ----------------
       dut.io.cpu_req.poke(false.B)
       dut.clock.step()
       dut.io.cpu_req.poke(true.B)

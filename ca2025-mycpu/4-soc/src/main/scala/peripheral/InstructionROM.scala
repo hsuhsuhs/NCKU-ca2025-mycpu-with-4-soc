@@ -22,10 +22,12 @@ class InstructionROM(instructionFilename: String) extends Module {
 
   val (instructionsInitFile, capacity) = readAsmBinary(instructionFilename)
   val mem                              = Mem(capacity, UInt(Parameters.InstructionWidth))
+  
+  // Load memory from file. 
+  // instructionsInitFile must be a relative path for Treadle compatibility.
   loadMemoryFromFileInline(mem, instructionsInitFile.toString.replaceAll("\\\\", "/"))
-  // Convert byte address to word index: subtract entry address offset, then divide by 4
-  // PC starts at 0x1000, but ROM instructions start at index 0
-  // Use combinational read mem(addr) instead of synchronous mem.read(addr) for immediate instruction fetch
+  
+  // Convert byte address to word index
   val wordAddress = (io.address - Parameters.EntryAddress) >> 2
   io.data := mem(wordAddress)
 
@@ -35,6 +37,7 @@ class InstructionROM(instructionFilename: String) extends Module {
     } else {
       getClass.getClassLoader.getResourceAsStream(filename)
     }
+    
     var instructions = new Array[BigInt](0)
     val arr          = new Array[Byte](4)
     while (inputStream.read(arr) == 4) {
@@ -43,21 +46,29 @@ class InstructionROM(instructionFilename: String) extends Module {
       val inst = BigInt(instBuf.getInt() & 0xffffffffL)
       instructions = instructions :+ inst
     }
+    // Pad with NOPs
     instructions = instructions :+ BigInt(0x00000013L)
     instructions = instructions :+ BigInt(0x00000013L)
     instructions = instructions :+ BigInt(0x00000013L)
-    val currentDir = System.getProperty("user.dir")
-    // Extract just the filename from instructionFilename (handles absolute paths)
+
+    // Treadle requires relative paths
     val baseName   = Paths.get(instructionFilename).getFileName.toString
-    val exeTxtPath = Paths.get(currentDir, "verilog", f"${baseName}.txt")
-    // Create verilog directory if it doesn't exist
-    Files.createDirectories(exeTxtPath.getParent)
-    val writer = new FileWriter(exeTxtPath.toString)
+    val relativePathStr = f"verilog/${baseName}.txt"
+    val exeTxtPath = Paths.get(relativePathStr)
+
+    if (exeTxtPath.getParent != null) {
+      Files.createDirectories(exeTxtPath.getParent)
+    }
+
+    val writer = new FileWriter(exeTxtPath.toFile)
     for (i <- instructions.indices) {
-      // Use @address\ndata format for loadMemoryFromFileInline compatibility
-      writer.write(f"@$i%x\n${instructions(i)}%08x\n")
+      // [FIX] Treadle Workaround: Write raw hex data only.
+      // Removed "@$i%x\n" to prevent NumberFormatException in Treadle parser.
+      // Data will be loaded sequentially starting from address 0.
+      writer.write(f"${instructions(i)}%08x\n")
     }
     writer.close()
+    
     (exeTxtPath, instructions.length)
   }
 }

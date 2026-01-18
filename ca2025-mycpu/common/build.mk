@@ -1,3 +1,6 @@
+RISCV_PATH := /usr
+RISCV_PREFIX := riscv64-unknown-elf-
+export RISCV_PATH RISCV_PREFIX
 # SPDX-License-Identifier: MIT
 # MyCPU is freely redistributable under the MIT License. See the file
 # "LICENSE" for information on usage and redistribution of this file.

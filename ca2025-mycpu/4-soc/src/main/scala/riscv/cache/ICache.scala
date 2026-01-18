@@ -2,6 +2,8 @@ package riscv.cache
 
 import chisel3._
 import chisel3.util._
+import bus.AXI4LiteChannels // Use the standard definition provided by professor
+import riscv.Parameters
 
 class ICacheIO(addrWidth: Int, dataWidth: Int) extends Bundle {
   val cpu_req      = Input(Bool())              // CPU fetch request
@@ -9,13 +11,8 @@ class ICacheIO(addrWidth: Int, dataWidth: Int) extends Bundle {
   val cpu_data     = Output(UInt(dataWidth.W))  // instruction out
   val cpu_stall    = Output(Bool())             // stall signal to pipeline
 
-  // AXI4-Lite Master Interface
-  val M_AXI_ARADDR  = Output(UInt(addrWidth.W))
-  val M_AXI_ARVALID = Output(Bool())
-  val M_AXI_RDATA   = Input(UInt(dataWidth.W))
-  val M_AXI_RVALID  = Input(Bool())
-  val M_AXI_RREADY  = Output(Bool())
-  val M_AXI_ARREADY = Input(Bool())
+  // AXI4-Lite Interface (Replaces manual M_AXI_* signals)
+  val axi = new AXI4LiteChannels(addrWidth, dataWidth)
 
   // debug for VCD  
   val dbg_state = Output(UInt(3.W))
@@ -27,7 +24,7 @@ object ICacheState {
 }
 
 class ICache extends Module {
-  val io = IO(new ICacheIO(32, 32))
+  val io = IO(new ICacheIO(Parameters.AddrBits, Parameters.DataBits))
 
   // Cache parameter
   val lineWords = 4
@@ -36,6 +33,7 @@ class ICache extends Module {
 
   val hitCnt  = RegInit(0.U(32.W))
   val missCnt = RegInit(0.U(32.W))
+  
   // SRAM for data & tag
   val dataRAM = SyncReadMem(lineWords * (1 << idxWidth), UInt(32.W))
   val tagRAM  = SyncReadMem(1 << idxWidth, UInt(tagWidth.W))
@@ -52,7 +50,6 @@ class ICache extends Module {
   val valid   = validRAM(idxField)
   val hit     = valid && (tagRead === tagField)
 
-
   // Pipeline stall control
   val stallReg = RegInit(false.B)
   io.cpu_stall := stallReg
@@ -63,15 +60,32 @@ class ICache extends Module {
   io.cpu_data := Mux(hit, dataOut, 0.U)
 
   // FSM
-  val state       = RegInit(ICacheState.sIdleCompare)
+  val state        = RegInit(ICacheState.sIdleCompare)
   io.dbg_state := state.asUInt
-  val refillCnt   = RegInit(0.U(2.W))
-  val missBase    = RegInit(0.U(32.W))
+  val refillCnt    = RegInit(0.U(2.W))
+  val missBase     = RegInit(0.U(32.W))
 
-  // Default AXI signal
-  io.M_AXI_ARVALID := false.B
-  io.M_AXI_RREADY  := false.B
-  io.M_AXI_ARADDR  := 0.U
+  // ----------------------------------------------------------------
+  // AXI4-Lite Default Signal Assignments
+  // ----------------------------------------------------------------
+  
+  // 1. Write Channels: I-Cache is Read-Only, so we tie these to 0
+  io.axi.write_address_channel.AWVALID := false.B
+  io.axi.write_address_channel.AWADDR  := 0.U
+  io.axi.write_address_channel.AWPROT  := 0.U
+  
+  io.axi.write_data_channel.WVALID     := false.B
+  io.axi.write_data_channel.WDATA      := 0.U
+  io.axi.write_data_channel.WSTRB      := 0.U
+  
+  io.axi.write_response_channel.BREADY := false.B
+
+  // 2. Read Channels: Set default values (logic below will override when active)
+  io.axi.read_address_channel.ARVALID := false.B
+  io.axi.read_address_channel.ARADDR  := 0.U
+  io.axi.read_address_channel.ARPROT  := 0.U
+  
+  io.axi.read_data_channel.RREADY     := false.B
 
   switch(state) {
     is(ICacheState.sIdleCompare) {
@@ -94,21 +108,28 @@ class ICache extends Module {
     is(ICacheState.sRefillRequest) {
       // Issue single-word AXI read
       stallReg := true.B
-      io.M_AXI_ARVALID := true.B
-      io.M_AXI_ARADDR  := missBase + (refillCnt << 2)
+      
+      // Access nested AXI signals
+      io.axi.read_address_channel.ARVALID := true.B
+      io.axi.read_address_channel.ARADDR  := missBase + (refillCnt << 2)
 
-      when(io.M_AXI_ARREADY && io.M_AXI_ARVALID) {
+      when(io.axi.read_address_channel.ARREADY && io.axi.read_address_channel.ARVALID) {
         state := ICacheState.sRefillWait
       }
     }
 
     is(ICacheState.sRefillWait) {
       stallReg := true.B
-      io.M_AXI_RREADY := true.B
-      when(io.M_AXI_RVALID && io.M_AXI_RREADY) {
+      
+      // Assert RREADY
+      io.axi.read_data_channel.RREADY := true.B
+      
+      // Check RVALID
+      when(io.axi.read_data_channel.RVALID && io.axi.read_data_channel.RREADY) {
         // write data to cache RAM
         val dataAddr = idxField * lineWords.U + refillCnt
-        dataRAM.write(dataAddr, io.M_AXI_RDATA)
+        // Use RDATA from bundle
+        dataRAM.write(dataAddr, io.axi.read_data_channel.RDATA)
 
         when(refillCnt === (lineWords - 1).U) {
           state := ICacheState.sUpdateTag
@@ -127,7 +148,6 @@ class ICache extends Module {
       // go back and re-service CPU
       state := ICacheState.sIdleCompare
     }
-
   }
 }
 

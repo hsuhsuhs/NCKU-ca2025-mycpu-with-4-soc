@@ -18,6 +18,12 @@
 #include <unistd.h>
 
 #include "VTop.h"
+#ifdef VM_TRACE
+#include <verilated_vcd_c.h>
+#endif
+#ifdef VM_TRACE
+#include <verilated_vcd_c.h>
+#endif
 #include "vga_display.h"
 
 static constexpr uint32_t UART_TEST_PASS = 0x0F;  // 4 subtests
@@ -413,6 +419,13 @@ int main(int argc, char **argv)
     top->io_cpu_csr_debug_read_address = 0;
     top->io_vga_pixclk = 0;
 
+#ifdef VM_TRACE
+    Verilated::traceEverOn(true);
+    VerilatedVcdC* tfp = new VerilatedVcdC;
+    top->trace(tfp, 99);  // 追蹤 99 層
+    tfp->open("trace.vcd");
+#endif
+
     uint32_t inst = mem.read(0x1000);
 
     while (cycle < max_cycles && !Verilated::gotFinish()) {
@@ -435,6 +448,10 @@ int main(int argc, char **argv)
         // This creates a stable snapshot of all DUT outputs for this clock
         // edge.
         top->eval();
+
+#ifdef VM_TRACE
+        tfp->dump(cycle);
+#endif
 
         // =====================================================================
         // CAPTURE PHASE: Snapshot all DUT outputs immediately after eval().
@@ -631,6 +648,11 @@ int main(int argc, char **argv)
             }
         }
     }
+
+#ifdef VM_TRACE
+    tfp->close();
+    delete tfp;
+#endif
 
     return 0;
 }

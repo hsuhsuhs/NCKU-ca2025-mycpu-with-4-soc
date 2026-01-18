@@ -18,7 +18,7 @@ verilator:
 			exit 1; \
 		fi; \
 	fi
-	cd verilog/verilator && verilator --exe --cc sim.cpp Top.v \
+	cd verilog/verilator && verilator --trace --exe --cc sim.cpp Top.v \
 		-CFLAGS "$$(sdl2-config --cflags)" \
 		-LDFLAGS "$$(sdl2-config --libs)" && \
 		make -C obj_dir -f VTop.mk
