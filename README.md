@@ -1,3 +1,4 @@
+[Complete development log and related report](https://hackmd.io/@sysprog/H1rtJ1jbbg)
 # Implement cache for MyCPU
 > 徐曉汎, 陳婕寧
 
